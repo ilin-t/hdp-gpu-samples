@@ -21,10 +21,9 @@ __global__ void SimpleSumReductionKernel (int* input, int* output){
             input[i] += input[i + stride]; 
             //printf("Thread %d writes %d on location %d \t", threadIdx.x, input[i], i);
         }
+        __syncthreads();
     }
-    
-    __syncthreads();
-    
+      
     if(threadIdx.x == 0){
     	//for(int i=0; i<blockDim.x; i++){
     		//printf("%d \t", input[i]);
