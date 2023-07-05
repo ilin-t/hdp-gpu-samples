@@ -1,3 +1,19 @@
+#include <iostream>
+#include <math.h>
+#include <chrono>
+#include <random>
+
+// Error checking for CUDA methods (not for the kernel though)
+#define cudaErrorCheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
 __global__ void SimpleSumReductionKernel (float* input, float* output){
     unsigned int i = 2*threadIdx.x;
     for (unsigned int stride = 1; stride <= blockDim.x; stride *= 2){
@@ -10,3 +26,71 @@ __global__ void SimpleSumReductionKernel (float* input, float* output){
         *output = input[0];
     }
 }
+
+int main(){
+
+
+	int N = 1<<28;
+	std::cout<<"Size: "<< N*sizeof(float)<<" B\n";
+	
+	float* hx = float[N];
+	
+	float* gx;
+	float* gy;
+	
+	cudaErrorCheck( cudaMalloc((void**)&gx, N*sizeof(float)));
+	cudaErrorCheck( cudaMalloc((void**)&gy, sizeof(float)));
+	
+	 // end for malloc
+	const auto mem_alloc_end = std::chrono::steady_clock::now();
+
+	//Will be used to obtain a seed for the random number engine
+	std::random_device rdx;
+
+	//Standard mersenne_twister_engine seeded with rd()
+	std::mt19937 genx(rdx()); 
+	std::uniform_int_distribution<> distrib(1, N);
+
+	// initialize hx and hy arrays on the host
+	for (int i = 0; i < N; i++) {
+		hx[i] = distrib(genx);
+	}
+
+	// copy the arrays from the CPU to the GPU
+	cudaMemcpy(gx, hx, N*sizeof(float), cudaMemcpyHostToDevice);
+
+
+	// end for initialization and memcpy
+	const auto data_init_end = std::chrono::steady_clock::now();
+
+	// Run kernel on 1 GiB of data on a single thread on the GPU
+	SimpleSumReductionKernel<<<1, 1>>>(gx, gy);
+
+	cudaErrorCheck( cudaPeekAtLastError() ); //debug the kernel output
+	cudaErrorCheck( cudaDeviceSynchronize() );
+
+	const auto kernel_end = std::chrono::steady_clock::now();
+
+	// copy the resulting array back to the GPU
+	cudaMemcpy(hy, gy, N*sizeof(float), cudaMemcpyDeviceToHost);
+
+
+	// Free memory
+	cudaFree(gx);
+	cudaFree(gy);
+
+	delete [] hx;
+	delete [] hy;
+
+	const auto free_mem = std::chrono::steady_clock::now();
+	std::cout << "Result: " << *hy;
+
+	std::cout << "Memory allocation duration: " << std::chrono::duration_cast<std::chrono::microseconds>(mem_alloc_end-start).count()/1000<< " ms \n" \
+		    << "Data initialization duration: " <<  std::chrono::duration_cast<std::chrono::microseconds>(data_init_end-mem_alloc_end).count()/1000 << " ms \n" \
+		    << "Kernel duration: " << std::chrono::duration_cast<std::chrono::microseconds>(kernel_end-data_init_end).count() << " microseconds \n" \
+		    << "Free memory duration: " << std::chrono::duration_cast<std::chrono::microseconds>(free_mem - kernel_end).count()/1000 << " ms \n";
+
+	return 0;
+}
+
+
